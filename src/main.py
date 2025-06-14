@@ -1,6 +1,6 @@
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
-from flask import Flask
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
@@ -10,23 +10,22 @@ Context: {context}
 Question: {question}
 Answer: 
 """
-model = OllamaLLM(base_url="http://localhost:11434", model="llama3")
+model = OllamaLLM(base_url="http://ollama:11434", model="llama3")
 prompt = ChatPromptTemplate.from_template(template)
 chain = prompt | model
 
-@app.route('/')
-def handle_chat():
-    context = ""
-    print("Welcome to the chat! Type 'exit' to quit.")
-    while True:
-        user_input = input("You: ")
-        if user_input.lower() == 'exit':
-            print("Exiting chat. Goodbye!")
-            break
-        context += f"{user_input}\n"
-        result = chain.invoke({"context": context, "question": user_input})
-        print(f"LLM chat bot: {result}")
-        context += f"\nUser: {user_input}\n LLMChatBot: {result}\n"
+@app.route('/api/v1/chat', methods=['POST'])
+def chat():
+    data = request.json
+    context = data.get("context", "")
+    question = data.get("question", "")
+
+    if not context or not question:
+        return jsonify({"error": "Context and question are required"}), 400
+    
+    result = chain.invoke({"context": context, "question": question})
+    return jsonify({"question": question, "answer": result})
+
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8000)
