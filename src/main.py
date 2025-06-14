@@ -1,11 +1,13 @@
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from http import HTTPStatus
 from functools import wraps
 import logging
 import os
 from datetime import datetime
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(
@@ -15,10 +17,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Configuration
 app.config['OLLAMA_BASE_URL'] = os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434')
 app.config['OLLAMA_MODEL'] = os.getenv('OLLAMA_MODEL', 'llama3')
+app.config['CONTEXT_EXPIRY'] = int(os.getenv('CONTEXT_EXPIRY', 3600))  # 1 hour default
 
 # Initialize Ollama
 template = """
@@ -30,6 +34,12 @@ Answer:
 model = OllamaLLM(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_MODEL'])
 prompt = ChatPromptTemplate.from_template(template)
 chain = prompt | model
+
+# In-memory storage for context
+context_store = defaultdict(lambda: {
+    'context': '',
+    'last_updated': datetime.now()
+})
 
 def validate_json(f):
     @wraps(f)
@@ -52,6 +62,22 @@ def log_request(f):
         return response
     return decorated_function
 
+def get_session_id():
+    """Get or create a session ID from the request"""
+    session_id = request.headers.get('X-Session-ID')
+    if not session_id:
+        session_id = request.remote_addr
+    return session_id
+
+def is_context_expired(session_id):
+    """Check if the context for a session has expired"""
+    if session_id not in context_store:
+        return True
+    
+    last_updated = context_store[session_id]['last_updated']
+    expiry_time = datetime.now() - last_updated
+    return expiry_time.total_seconds() > app.config['CONTEXT_EXPIRY']
+
 @app.route('/api/v1/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -70,8 +96,9 @@ def chat():
     
     Request body:
     {
-        "context": "string",
-        "question": "string"
+        "context": "string", (optional)
+        "question": "string",
+        "clear_context": boolean (optional)
     }
     
     Returns:
@@ -80,27 +107,38 @@ def chat():
         "data": {
             "question": "string",
             "answer": "string",
-            "timestamp": "string"
+            "timestamp": "string",
+            "session_id": "string"
         }
     }
     """
     try:
         data = request.get_json()
-        context = data.get("context", "")
+        session_id = get_session_id()
         question = data.get("question", "")
+        clear_context = data.get("clear_context", False)
 
         # Input validation
-        if not context:
-            return jsonify({
-                'status': 'error',
-                'message': 'Context is required'
-            }), HTTPStatus.BAD_REQUEST
-        
         if not question:
             return jsonify({
                 'status': 'error',
                 'message': 'Question is required'
             }), HTTPStatus.BAD_REQUEST
+
+        # Handle context
+        if clear_context or session_id not in context_store:
+            context = data.get("context", "")
+        else:
+            if is_context_expired(session_id):
+                context = data.get("context", "")
+            else:
+                context = context_store[session_id]['context']
+
+        # Update context store
+        context_store[session_id] = {
+            'context': context,
+            'last_updated': datetime.now()
+        }
 
         # Process the request
         result = chain.invoke({"context": context, "question": question})
@@ -110,7 +148,8 @@ def chat():
             'data': {
                 'question': question,
                 'answer': result,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'session_id': session_id
             }
         }), HTTPStatus.OK
 
@@ -121,6 +160,17 @@ def chat():
             'message': 'Internal server error',
             'error': str(e)
         }), HTTPStatus.INTERNAL_SERVER_ERROR
+
+@app.route('/api/v1/context', methods=['DELETE'])
+def clear_context():
+    """Clear the context for a session"""
+    session_id = get_session_id()
+    if session_id in context_store:
+        del context_store[session_id]
+    return jsonify({
+        'status': 'success',
+        'message': 'Context cleared successfully'
+    }), HTTPStatus.OK
 
 @app.errorhandler(404)
 def not_found(error):
