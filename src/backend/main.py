@@ -8,6 +8,11 @@ import logging
 import os
 from datetime import datetime
 from collections import defaultdict
+from langchain_community.vectorstores import Chroma
+from langchain_ollama import OllamaEmbeddings
+
+import os
+import pandas as pd
 
 # Configure logging
 logging.basicConfig(
@@ -17,7 +22,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)
+retriever = None # Enable CORS for all routes
 
 # Configuration
 app.config['OLLAMA_BASE_URL'] = os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434')
@@ -140,8 +146,14 @@ def chat():
             'last_updated': datetime.now()
         }
 
+        if retriever is not None:
+            context = retriever.invoke(question)
+            result = chain.invoke({"context": context, "question": question})
+        else:
+            result = chain.invoke({"context": context, "question": question})
+
         # Process the request
-        result = chain.invoke({"context": context, "question": question})
+        
         
         return jsonify({
             'status': 'success',
@@ -171,6 +183,49 @@ def clear_context():
         'status': 'success',
         'message': 'Context cleared successfully'
     }), HTTPStatus.OK
+
+@app.route('/api/v1/rag', methods=['POST'])
+def rag():
+    """Process a CSV file and create a vector store for RAG"""
+    data = request.get_json()
+    csv_path = data.get('csv_path')
+    if not csv_path:
+        return jsonify({
+            'status': 'error',
+            'message': 'CSV path is required'
+        }), HTTPStatus.BAD_REQUEST
+    
+    if not os.path.exists(csv_path):
+        return jsonify({
+            'status': 'error',
+            'message': f'CSV file not found at path: {csv_path}'
+        }), HTTPStatus.NOT_FOUND
+    
+    # Load the data
+    df = pd.read_csv(csv_path)  
+
+    # Initialize the embeddings
+    embeddings = OllamaEmbeddings(model="nomic-embed-text")
+
+    # Initialize the vector store
+    vectorstore = Chroma.from_documents(
+        documents=df.to_dict(orient="records"),
+        embedding=embeddings,
+        persist_directory="data/chroma_db"
+    )
+
+    # Initialize the retriever
+    retriever = vectorstore.as_retriever()  
+
+    return jsonify({
+        'status': 'success',
+        'message': 'RAG system initialized successfully',
+        'data': {
+            'rows_processed': len(df),
+            'vector_store_path': 'data/chroma_db'
+        }
+    }), HTTPStatus.OK
+
 
 @app.errorhandler(404)
 def not_found(error):

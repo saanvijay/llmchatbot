@@ -9,9 +9,11 @@ import {
   CircularProgress,
   IconButton,
   Alert,
+  Stack,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import axios from 'axios';
 
 // Use relative URL in development (will be proxied) or full URL in production
@@ -35,7 +37,10 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [error, setError] = useState(null);
+  const [csvFile, setCsvFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -125,6 +130,65 @@ function App() {
     }
   };
 
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type === 'text/csv') {
+      setCsvFile(file);
+      setError(null);
+    } else {
+      setError('Please select a valid CSV file');
+      setCsvFile(null);
+    }
+  };
+
+  const handleFileUpload = async () => {
+    if (!csvFile) {
+      setError('Please select a CSV file first');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append('file', csvFile);
+
+    try {
+      const response = await api.post('/api/v1/rag', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (response.data.status === 'success') {
+        setError(null);
+        setMessages(prev => [...prev, {
+          text: `CSV file "${csvFile.name}" uploaded successfully. You can now ask questions about the data.`,
+          sender: 'bot'
+        }]);
+        setCsvFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } else {
+        throw new Error(response.data.message || 'Failed to upload file');
+      }
+    } catch (error) {
+      console.error('Upload Error:', error);
+      let errorMessage = 'Failed to upload file. Please try again.';
+      
+      if (error.response) {
+        errorMessage = error.response.data?.message || error.response.statusText;
+      } else if (error.request) {
+        errorMessage = 'No response from server. Please check your connection.';
+      }
+      
+      setError(errorMessage);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <Container maxWidth="md" sx={{ height: '100vh', py: 2 }}>
       <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -142,6 +206,39 @@ function App() {
             {error}
           </Alert>
         )}
+
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Button
+              variant="outlined"
+              component="label"
+              startIcon={<UploadFileIcon />}
+              disabled={uploading}
+            >
+              Choose CSV File
+              <input
+                type="file"
+                hidden
+                accept=".csv"
+                onChange={handleFileChange}
+                ref={fileInputRef}
+              />
+            </Button>
+            {csvFile && (
+              <Typography variant="body2" sx={{ flex: 1 }}>
+                Selected: {csvFile.name}
+              </Typography>
+            )}
+            <Button
+              variant="contained"
+              onClick={handleFileUpload}
+              disabled={!csvFile || uploading}
+              startIcon={uploading ? <CircularProgress size={20} /> : <UploadFileIcon />}
+            >
+              {uploading ? 'Uploading...' : 'Upload'}
+            </Button>
+          </Stack>
+        </Box>
 
         <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
           {messages.map((message, index) => (

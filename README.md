@@ -5,28 +5,32 @@ Simple LLM chatbot using ollama
 1. Docker
 2. Ollama3
 3. Python3
+4. ReactJS
 
 # Install Docker Desktop
 https://docs.docker.com/desktop/setup/install/mac-install/
 
 
 
-# Create docker network and bring-up containers
+# Bring-up backend and frontend apps
 ```
-cd src
+cd src/backend
 docker build --no-cache -t llmchatbottemplate .
 docker network ls | grep llmnetwork && docker network rm llmnetwork
+docker network create llmnetwork
 docker-compose up -d
+cd src/frontend
+npm install
+npm start
 ```
 
-# Test using curl
+# Test backend using curl
 ```
 curl --request POST \
   --url http://localhost:8000/api/v1/chat \
   --header 'Content-Type: application/json' \
   --header 'User-Agent: insomnia/11.2.0' \
   --data '{
-	"context": "climate",
-	"question": "weather in usa texas?"
+	"question": "What is the capital of India?"
 }'
 ```

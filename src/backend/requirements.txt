@@ -32,4 +32,7 @@ urllib3==2.4.0
 zstandard==0.23.0
 Flask==3.1.1
 flask_cors
+pandas
+langchain-chroma
+langchain_community
 
