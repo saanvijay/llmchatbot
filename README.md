@@ -17,6 +17,7 @@ https://docs.docker.com/desktop/setup/install/mac-install/
 cd src/backend
 docker build --no-cache -t llmchatbottemplate .
 docker network ls | grep llmnetwork && docker network rm llmnetwork
+docker network create llmnetwork
 docker-compose up -d
 cd src/frontend
 npm install
