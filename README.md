@@ -7,21 +7,11 @@ Simple LLM chatbot using ollama
 3. Python3
 4. ReactJS
 
-# Install Docker Desktop
-https://docs.docker.com/desktop/setup/install/mac-install/
-
-
-
 # Bring-up backend and frontend apps
 ```
-cd src/backend
-docker build --no-cache -t llmchatbottemplate .
-docker network ls | grep llmnetwork && docker network rm llmnetwork
-docker network create llmnetwork
-docker-compose up -d
-cd src/frontend
-npm install
-npm start
+make clean
+make
+make run
 ```
 
 # Test backend using curl

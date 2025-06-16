@@ -10,6 +10,7 @@ from datetime import datetime
 from collections import defaultdict
 from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaEmbeddings
+from langchain.schema import Document
 
 import os
 import pandas as pd
@@ -23,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
-retriever = None # Enable CORS for all routes
+global retriever 
+retriever = None
 
 # Configuration
 app.config['OLLAMA_BASE_URL'] = os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434')
@@ -97,27 +99,6 @@ def health_check():
 @validate_json
 @log_request
 def chat():
-    """
-    Chat endpoint that processes questions based on provided context
-    
-    Request body:
-    {
-        "context": "string", (optional)
-        "question": "string",
-        "clear_context": boolean (optional)
-    }
-    
-    Returns:
-    {
-        "status": "success",
-        "data": {
-            "question": "string",
-            "answer": "string",
-            "timestamp": "string",
-            "session_id": "string"
-        }
-    }
-    """
     try:
         data = request.get_json()
         session_id = get_session_id()
@@ -146,14 +127,11 @@ def chat():
             'last_updated': datetime.now()
         }
 
+        # Process the request
         if retriever is not None:
             context = retriever.invoke(question)
-            result = chain.invoke({"context": context, "question": question})
-        else:
-            result = chain.invoke({"context": context, "question": question})
-
-        # Process the request
-        
+ 
+        result = chain.invoke({"context": context, "question": question})
         
         return jsonify({
             'status': 'success',
@@ -187,44 +165,90 @@ def clear_context():
 @app.route('/api/v1/rag', methods=['POST'])
 def rag():
     """Process a CSV file and create a vector store for RAG"""
-    data = request.get_json()
-    csv_path = data.get('csv_path')
-    if not csv_path:
+    try:
+        if 'file' not in request.files:
+            return jsonify({
+                'status': 'error',
+                'message': 'No file part in the request'
+            }), HTTPStatus.BAD_REQUEST
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({
+                'status': 'error',
+                'message': 'No file selected'
+            }), HTTPStatus.BAD_REQUEST
+
+        if not file.filename.endswith('.csv'):
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid file type. Only CSV files are allowed'
+            }), HTTPStatus.BAD_REQUEST
+
+        # Save the file
+        os.makedirs('data1', exist_ok=True)
+        filepath = os.path.join('data1', file.filename)
+        file.save(filepath)
+    
+        # Load the data
+        df = pd.read_csv(filepath)
+
+        # Convert DataFrame to list of dictionaries with additional fields
+        documents = []
+
+
+        # Initialize the embeddings
+        embeddings = OllamaEmbeddings(model="mxbai-embed-large")
+        rag_docs = not os.path.exists("data1/chroma_db")
+        if rag_docs:
+            documents = []
+            ids = []
+            for index, row in df.iterrows():
+                doc = Document(
+                    page_content=row["player name"] + " " + row["summary"],
+                    metadata={
+                        "team": row["Team"],
+                        "year": row["year"],
+                        "matches": row["Matches Played"],
+                        "runs": row["Runs Scored"],
+                        "wickets": row["Wickets Taken"],
+                        "strike_rate": row["Strike Rate"],
+                    },
+                    id=str(index)
+                )
+                ids.append(str(index))
+                documents.append(doc)
+
+        # Initialize the vector store with documents
+        vectorstore = Chroma(
+            collection_name="rag_collection",
+            persist_directory="data1/chroma_db",
+            embedding_function=embeddings
+        )
+
+        if rag_docs:
+            vectorstore.add_documents(documents, ids=ids)   
+
+        # Initialize the retriever
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})  
+
+        return jsonify({
+            'status': 'success',
+            'message': 'RAG system initialized successfully',
+            'data': {
+                'filename': file.filename,
+                'rows_processed': len(df),
+                'vector_store_path': 'data/chroma_db'
+            }
+        }), HTTPStatus.OK
+
+    except Exception as e:
+        logger.error(f"Error processing RAG request: {str(e)}")
         return jsonify({
             'status': 'error',
-            'message': 'CSV path is required'
-        }), HTTPStatus.BAD_REQUEST
-    
-    if not os.path.exists(csv_path):
-        return jsonify({
-            'status': 'error',
-            'message': f'CSV file not found at path: {csv_path}'
-        }), HTTPStatus.NOT_FOUND
-    
-    # Load the data
-    df = pd.read_csv(csv_path)  
-
-    # Initialize the embeddings
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
-
-    # Initialize the vector store
-    vectorstore = Chroma.from_documents(
-        documents=df.to_dict(orient="records"),
-        embedding=embeddings,
-        persist_directory="data/chroma_db"
-    )
-
-    # Initialize the retriever
-    retriever = vectorstore.as_retriever()  
-
-    return jsonify({
-        'status': 'success',
-        'message': 'RAG system initialized successfully',
-        'data': {
-            'rows_processed': len(df),
-            'vector_store_path': 'data/chroma_db'
-        }
-    }), HTTPStatus.OK
+            'message': 'Error processing CSV file',
+            'error': str(e)
+        }), HTTPStatus.INTERNAL_SERVER_ERROR
 
 
 @app.errorhandler(404)
