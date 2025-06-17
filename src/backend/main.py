@@ -8,12 +8,14 @@ import logging
 import os
 from datetime import datetime
 from collections import defaultdict
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 import os
+import io
 import pandas as pd
+import chromadb
 
 # Configure logging
 logging.basicConfig(
@@ -24,18 +26,18 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
-global retriever 
-retriever = None
+#global retriever 
+#retriever = None
 
 # Configuration
 app.config['OLLAMA_BASE_URL'] = os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434')
-app.config['OLLAMA_MODEL'] = os.getenv('OLLAMA_MODEL', 'llama3')
+app.config['OLLAMA_MODEL'] = os.getenv('OLLAMA_MODEL', 'llama3.2')
 app.config['CONTEXT_EXPIRY'] = int(os.getenv('CONTEXT_EXPIRY', 3600))  # 1 hour default
 
 # Initialize Ollama
 template = """
 Answer the queries based on the provided context.
-Context: {context}
+Summary: {summary}
 Question: {question}
 Answer: 
 """
@@ -127,11 +129,20 @@ def chat():
             'last_updated': datetime.now()
         }
 
-        # Process the request
-        if retriever is not None:
-            context = retriever.invoke(question)
+        summary = []
+        if os.path.exists("data1/chroma_db"):
+            client = chromadb.PersistentClient(path="data1/chroma_db")
+            embedding_fn = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model="mxbai-embed-large")
+            
+            vector_store = Chroma(
+                client=client,
+                collection_name="rag_collection",
+                embedding_function=embedding_fn
+            )
+            retriever = vector_store.as_retriever()
+            summary = retriever.invoke(question)
  
-        result = chain.invoke({"context": context, "question": question})
+        result = chain.invoke({"summary": summary, "question": question})
         
         return jsonify({
             'status': 'success',
@@ -184,63 +195,53 @@ def rag():
                 'status': 'error',
                 'message': 'Invalid file type. Only CSV files are allowed'
             }), HTTPStatus.BAD_REQUEST
-
-        # Save the file
-        os.makedirs('data1', exist_ok=True)
-        filepath = os.path.join('data1', file.filename)
-        file.save(filepath)
-    
-        # Load the data
-        df = pd.read_csv(filepath)
-
-        # Convert DataFrame to list of dictionaries with additional fields
-        documents = []
-
-
-        # Initialize the embeddings
-        embeddings = OllamaEmbeddings(model="mxbai-embed-large")
-        rag_docs = not os.path.exists("data1/chroma_db")
-        if rag_docs:
+        
+        if file:
+            df = pd.read_csv(io.StringIO(file.read().decode('utf-8')))
             documents = []
-            ids = []
-            for index, row in df.iterrows():
-                doc = Document(
-                    page_content=row["player name"] + " " + row["summary"],
-                    metadata={
-                        "team": row["Team"],
-                        "year": row["year"],
-                        "matches": row["Matches Played"],
-                        "runs": row["Runs Scored"],
-                        "wickets": row["Wickets Taken"],
-                        "strike_rate": row["Strike Rate"],
-                    },
-                    id=str(index)
-                )
-                ids.append(str(index))
-                documents.append(doc)
+        # Initialize the embeddings
+            embeddings = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model="mxbai-embed-large")
+            rag_docs = not os.path.exists("data1/chroma_db")
+            if rag_docs:
+                documents = []
+                ids = []
+                for index, row in df.iterrows():
+                    doc = Document(
+                        page_content=row["name"] + " " + row["summary"],
+                        metadata={
+                            "team": row["team"],
+                            "year": row["year"],
+                            "matches": row["matches"],
+                            "runs": row["runs"],
+                            "wickets": row["wickets"],
+                            "strike_rate": row["strike"],
+                        },
+                        id=str(index)
+                    )
+                    ids.append(str(index))
+                    documents.append(doc)
 
         # Initialize the vector store with documents
-        vectorstore = Chroma(
-            collection_name="rag_collection",
-            persist_directory="data1/chroma_db",
-            embedding_function=embeddings
-        )
+                vectorstore = Chroma(
+                    collection_name="rag_collection",
+                    persist_directory="data1/chroma_db",
+                    embedding_function=embeddings
+                )
 
-        if rag_docs:
-            vectorstore.add_documents(documents, ids=ids)   
+                vectorstore.add_documents(documents, ids=ids)   
 
         # Initialize the retriever
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})  
+        #retriever = vectorstore.as_retriever(search_kwargs={"k": 4})  
 
-        return jsonify({
-            'status': 'success',
-            'message': 'RAG system initialized successfully',
-            'data': {
-                'filename': file.filename,
-                'rows_processed': len(df),
-                'vector_store_path': 'data/chroma_db'
-            }
-        }), HTTPStatus.OK
+            return jsonify({
+                'status': 'success',
+                'message': 'RAG system initialized successfully',
+                'data': {
+                    'filename': file.filename,
+                    'rows_processed': len(df),
+                    'vector_store_path': 'data1/chroma_db'
+                }
+            }), HTTPStatus.OK
 
     except Exception as e:
         logger.error(f"Error processing RAG request: {str(e)}")
@@ -274,4 +275,4 @@ def internal_error(error):
 
 if __name__ == "__main__":
     port = int(os.getenv('PORT', 8000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)

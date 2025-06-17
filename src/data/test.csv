@@ -1,4 +1,4 @@
-year,player name,Team,Matches Played,Runs Scored,Wickets Taken,Strike Rate,summary
+year,name,team,matches,runs,wickets,strike,summary
 2025,Virat Kohli,RCB,14,720,0,145.6,"Top run-scorer with 720 runs at an impressive strike rate of 145.6"
 2025,Rohit Sharma,MI,14,680,0,138.2,"Second highest run-scorer with 680 runs at a strike rate of 138.2"
 2025,Jasprit Bumrah,MI,14,24,22,0,"Leading wicket-taker with 22 wickets, maintaining excellent economy"

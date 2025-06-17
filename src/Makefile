@@ -11,7 +11,7 @@ clean:
 
 .PHONY: run
 run: build
-	docker network create llmnetwork && \
+	docker network inspect llmnetwork >/dev/null 2>&1 || docker network create llmnetwork && \
 	cd backend && \
 	docker-compose up -d && \
 	cd ../frontend && \
