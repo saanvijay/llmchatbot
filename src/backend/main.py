@@ -1,3 +1,4 @@
+from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from flask import Flask, request, jsonify
@@ -17,6 +18,7 @@ import io
 import pandas as pd
 import chromadb
 
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -29,16 +31,23 @@ CORS(app)
 #global retriever 
 #retriever = None
 
+load_dotenv('config/.env')
+
 # Configuration
-app.config['OLLAMA_BASE_URL'] = os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434')
-app.config['OLLAMA_MODEL'] = os.getenv('OLLAMA_MODEL', 'llama3.2')
-app.config['CONTEXT_EXPIRY'] = int(os.getenv('CONTEXT_EXPIRY', 3600))  # 1 hour default
+app.config['OLLAMA_BASE_URL'] = os.getenv('OLLAMA_BASE_URL')
+app.config['OLLAMA_MODEL'] = os.getenv('OLLAMA_MODEL')
+app.config['OLLAMA_EMBEDDING_MODEL'] = os.getenv('OLLAMA_EMBEDDING_MODEL')
+app.config['CONTEXT_EXPIRY'] = int(os.getenv('CONTEXT_EXPIRY'))
+app.config['BACKEND_SERVER_PORT'] = int (os.getenv('BACKEND_SERVER_PORT'))
+app.config['CHROMA_DB_PATH'] = os.getenv('CHROMA_DB_PATH')
+app.config['CHROMA_COLLECTION'] = os.getenv('CHROMA_COLLECTION')
 
 # Initialize Ollama
 template = """
 Answer the queries based on the provided context.
 Summary: {summary}
 Question: {question}
+Context: {context}
 Answer: 
 """
 model = OllamaLLM(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_MODEL'])
@@ -130,19 +139,20 @@ def chat():
         }
 
         summary = []
-        if os.path.exists("data1/chroma_db"):
-            client = chromadb.PersistentClient(path="data1/chroma_db")
-            embedding_fn = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model="mxbai-embed-large")
+        if os.path.exists(app.config['CHROMA_DB_PATH']):
+            client = chromadb.PersistentClient(path=app.config['CHROMA_DB_PATH'])
+            embedding_fn = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
             
             vector_store = Chroma(
                 client=client,
-                collection_name="rag_collection",
+                collection_name=app.config['CHROMA_COLLECTION'],
                 embedding_function=embedding_fn
             )
             retriever = vector_store.as_retriever()
             summary = retriever.invoke(question)
  
-        result = chain.invoke({"summary": summary, "question": question})
+        result = chain.invoke({"summary": summary, "question": question, "context": context})
+        context += f"Question: {question} Answer: {result}"
         
         return jsonify({
             'status': 'success',
@@ -200,8 +210,8 @@ def rag():
             df = pd.read_csv(io.StringIO(file.read().decode('utf-8')))
             documents = []
         # Initialize the embeddings
-            embeddings = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model="mxbai-embed-large")
-            rag_docs = not os.path.exists("data1/chroma_db")
+            embeddings = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
+            rag_docs = not os.path.exists(app.config['CHROMA_DB_PATH'])
             if rag_docs:
                 documents = []
                 ids = []
@@ -223,8 +233,8 @@ def rag():
 
         # Initialize the vector store with documents
                 vectorstore = Chroma(
-                    collection_name="rag_collection",
-                    persist_directory="data1/chroma_db",
+                    collection_name=app.config['CHROMA_COLLECTION'],
+                    persist_directory=app.config['CHROMA_DB_PATH'],
                     embedding_function=embeddings
                 )
 
@@ -239,7 +249,7 @@ def rag():
                 'data': {
                     'filename': file.filename,
                     'rows_processed': len(df),
-                    'vector_store_path': 'data1/chroma_db'
+                    'vector_store_path': app.config['CHROMA_DB_PATH']
                 }
             }), HTTPStatus.OK
 
@@ -274,5 +284,5 @@ def internal_error(error):
     }), HTTPStatus.INTERNAL_SERVER_ERROR
 
 if __name__ == "__main__":
-    port = int(os.getenv('PORT', 8000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    port = int(os.getenv('PORT', app.config['BACKEND_SERVER_PORT']))
+    app.run(host='0.0.0.0', port=port)

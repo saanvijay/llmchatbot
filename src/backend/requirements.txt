@@ -38,4 +38,4 @@ langchain_ollama
 langchain_core
 langchain_community
 chromadb
-
+dotenv
