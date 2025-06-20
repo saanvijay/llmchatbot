@@ -9,6 +9,7 @@ sleep 5
 
 echo "Pulling mxbai-embed-large..."
 ollama pull mxbai-embed-large
+ollama pull llama3:latest
 echo "Done."
 
 # Wait for Ollama process to finish

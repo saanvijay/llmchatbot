@@ -114,35 +114,13 @@ def chat():
         data = request.get_json()
         session_id = get_session_id()
         question = data.get("question", "")
-        clear_context = data.get("clear_context", False)
 
-        # Input validation
-        if not question:
-            return jsonify({
-                'status': 'error',
-                'message': 'Question is required'
-            }), HTTPStatus.BAD_REQUEST
-
-        # Handle context
-        if clear_context or session_id not in context_store:
-            context = data.get("context", "")
-        else:
-            if is_context_expired(session_id):
-                context = data.get("context", "")
-            else:
-                context = context_store[session_id]['context']
-
-        # Update context store
-        context_store[session_id] = {
-            'context': context,
-            'last_updated': datetime.now()
-        }
-
+        # Retrieve previous context or start fresh
+        context = context_store[session_id]['context'] if session_id in context_store else ""
         summary = []
         if os.path.exists(app.config['CHROMA_DB_PATH']):
             client = chromadb.PersistentClient(path=app.config['CHROMA_DB_PATH'])
             embedding_fn = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
-            
             vector_store = Chroma(
                 client=client,
                 collection_name=app.config['CHROMA_COLLECTION'],
@@ -150,10 +128,14 @@ def chat():
             )
             retriever = vector_store.as_retriever()
             summary = retriever.invoke(question)
- 
+
         result = chain.invoke({"summary": summary, "question": question, "context": context})
-        context += f"Question: {question} Answer: {result}"
-        
+        # Append new Q&A to context and store it
+        context += f"Question: {question} Answer: {result}\n"
+        context_store[session_id] = {
+            'context': context,
+            'last_updated': datetime.now()
+        }
         return jsonify({
             'status': 'success',
             'data': {

@@ -5,7 +5,7 @@ services:
     image: ollama/ollama
     container_name: ollama
     volumes:
-      - /Users/vijay/ollamamodels:/root/.ollama
+      - /tmp/ollamamodels:/root/.ollama
       - ./entrypoint.sh:/entrypoint.sh
     entrypoint: ["/entrypoint.sh"]
     ports:
