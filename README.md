@@ -9,7 +9,6 @@ Simple LLM chatbot using ollama
 
 # Bring-up backend and frontend apps
 ```
-make clean
 make
 make run
 ```
@@ -23,4 +22,9 @@ curl --request POST \
   --data '{
 	"question": "What is the capital of India?"
 }'
+```
+
+# Cleanup
+```
+make clean
 ```
