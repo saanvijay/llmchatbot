@@ -12,6 +12,12 @@ from collections import defaultdict
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
+import requests
+import mimetypes
+from werkzeug.utils import secure_filename
+import tempfile
+import PyPDF2
+import docx
 
 import os
 import io
@@ -114,6 +120,7 @@ def chat():
         data = request.get_json()
         session_id = get_session_id()
         question = data.get("question", "")
+        collection_name = data.get("collection_name")
 
         # Retrieve previous context or start fresh
         context = context_store[session_id]['context'] if session_id in context_store else ""
@@ -121,9 +128,10 @@ def chat():
         if os.path.exists(app.config['CHROMA_DB_PATH']):
             client = chromadb.PersistentClient(path=app.config['CHROMA_DB_PATH'])
             embedding_fn = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
+            chroma_collection = collection_name if collection_name else app.config['CHROMA_COLLECTION']
             vector_store = Chroma(
                 client=client,
-                collection_name=app.config['CHROMA_COLLECTION'],
+                collection_name=chroma_collection,
                 embedding_function=embedding_fn
             )
             retriever = vector_store.as_retriever()
@@ -181,82 +189,62 @@ def clear_context():
 
 @app.route('/api/v1/rag', methods=['POST'])
 def rag():
-    """Process a CSV file and create a vector store for RAG"""
+    """Accepts a file (csv, pdf, doc) or a url, extracts content, and creates a Chroma DB collection for RAG."""
     try:
-        if 'file' not in request.files:
-            return jsonify({
-                'status': 'error',
-                'message': 'No file part in the request'
-            }), HTTPStatus.BAD_REQUEST
+        collection_name = app.config['CHROMA_COLLECTION']
+        if not collection_name:
+            return jsonify({'status': 'error', 'message': 'CHROMA_COLLECTION is not configured in the environment.'}), HTTPStatus.INTERNAL_SERVER_ERROR
 
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({
-                'status': 'error',
-                'message': 'No file selected'
-            }), HTTPStatus.BAD_REQUEST
+        # Check if it's a file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            filename = secure_filename(file.filename)
+            ext = filename.split('.')[-1].lower()
+            content = ''
+            if ext == 'csv':
+                df = pd.read_csv(file)
+                # Concatenate all text columns for embedding
+                content = '\n'.join(df.astype(str).apply(lambda row: ' '.join(row), axis=1))
+            elif ext == 'pdf':
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                    file.save(tmp.name)
+                    reader = PyPDF2.PdfReader(tmp.name)
+                    content = '\n'.join(page.extract_text() or '' for page in reader.pages)
+            elif ext in ['doc', 'docx']:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
+                    file.save(tmp.name)
+                    doc = docx.Document(tmp.name)
+                    content = '\n'.join([para.text for para in doc.paragraphs])
+            else:
+                return jsonify({'status': 'error', 'message': 'Unsupported file type.'}), HTTPStatus.BAD_REQUEST
+        else:
+            # Assume JSON body for URL
+            data = request.get_json()
+            url = data.get('url')
+            if not url:
+                return jsonify({'status': 'error', 'message': 'url is required for RAG processing.'}), HTTPStatus.BAD_REQUEST
+            response = requests.get(url, timeout=60)
+            if response.status_code != 200:
+                return jsonify({'status': 'error', 'message': f'Failed to fetch URL: {response.status_code}'}), HTTPStatus.BAD_REQUEST
+            content = response.text
 
-        if not file.filename.endswith('.csv'):
-            return jsonify({
-                'status': 'error',
-                'message': 'Invalid file type. Only CSV files are allowed'
-            }), HTTPStatus.BAD_REQUEST
-        
-        if file:
-            df = pd.read_csv(io.StringIO(file.read().decode('utf-8')))
-            documents = []
-        # Initialize the embeddings
-            embeddings = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
-            rag_docs = not os.path.exists(app.config['CHROMA_DB_PATH'])
-            if rag_docs:
-                documents = []
-                ids = []
-                for index, row in df.iterrows():
-                    doc = Document(
-                        page_content=row["name"] + " " + row["summary"],
-                        metadata={
-                            "team": row["team"],
-                            "year": row["year"],
-                            "matches": row["matches"],
-                            "runs": row["runs"],
-                            "wickets": row["wickets"],
-                            "strike_rate": row["strike"],
-                        },
-                        id=str(index)
-                    )
-                    ids.append(str(index))
-                    documents.append(doc)
+        if not content.strip():
+            return jsonify({'status': 'error', 'message': 'No content extracted from input.'}), HTTPStatus.BAD_REQUEST
 
-        # Initialize the vector store with documents
-                vectorstore = Chroma(
-                    collection_name=app.config['CHROMA_COLLECTION'],
-                    persist_directory=app.config['CHROMA_DB_PATH'],
-                    embedding_function=embeddings
-                )
-
-                vectorstore.add_documents(documents, ids=ids)   
-
-        # Initialize the retriever
-        #retriever = vectorstore.as_retriever(search_kwargs={"k": 4})  
-
-            return jsonify({
-                'status': 'success',
-                'message': 'RAG system initialized successfully',
-                'data': {
-                    'filename': file.filename,
-                    'rows_processed': len(df),
-                    'vector_store_path': app.config['CHROMA_DB_PATH']
-                }
-            }), HTTPStatus.OK
-
+        # Create document and store in Chroma
+        doc = Document(page_content=content, metadata={'source': collection_name}, id='0')
+        embeddings = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
+        client = chromadb.PersistentClient(path=app.config['CHROMA_DB_PATH'])
+        vectorstore = Chroma(
+            client=client,
+            collection_name=collection_name,
+            embedding_function=embeddings
+        )
+        vectorstore.add_documents([doc], ids=['0'])
+        return jsonify({'status': 'success', 'message': f'RAG collection {collection_name} created.'}), HTTPStatus.OK
     except Exception as e:
         logger.error(f"Error processing RAG request: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': 'Error processing CSV file',
-            'error': str(e)
-        }), HTTPStatus.INTERNAL_SERVER_ERROR
-
+        return jsonify({'status': 'error', 'message': 'Error processing input for RAG', 'error': str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.errorhandler(404)
 def not_found(error):
