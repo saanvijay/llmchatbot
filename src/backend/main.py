@@ -127,24 +127,38 @@ def chat():
                 embedding_function=embedding_fn
             )
             retriever = vector_store.as_retriever()
-            summary = retriever.invoke(question)
+            full_query = f"{context}\n\n{question}"
+            summary = retriever.invoke(full_query)
+        
+        #logger.info(f"VIJAY:", {"summary": summary, "question": question, "context": context})
+        if not summary and not context:
+            chain1 = model
+            result = chain1.invoke(question)
+        elif not summary and context:
+            chain2 = model
+            full_query = f"{context}\n\n{question}"
+            result = chain2.invoke(full_query)
+        else:
+            result = chain.invoke({"summary": summary, "question": question, "context": context})
+        
+        if result :
+            #logger.info("VIJAY : Result is", {result})
+            # Append new Q&A to context and store it
+            context += f"Question: {question} Answer: {result}\n"
 
-        result = chain.invoke({"summary": summary, "question": question, "context": context})
-        # Append new Q&A to context and store it
-        context += f"Question: {question} Answer: {result}\n"
-        context_store[session_id] = {
-            'context': context,
-            'last_updated': datetime.now()
-        }
-        return jsonify({
-            'status': 'success',
-            'data': {
-                'question': question,
-                'answer': result,
-                'timestamp': datetime.now().isoformat(),
-                'session_id': session_id
+            context_store[session_id] = {
+                'context': context,
+                'last_updated': datetime.now()
             }
-        }), HTTPStatus.OK
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'question': question,
+                    'answer': result,
+                    'timestamp': datetime.now().isoformat(),
+                    'session_id': session_id
+                }
+            }), HTTPStatus.OK
 
     except Exception as e:
         logger.error(f"Error processing chat request: {str(e)}")
