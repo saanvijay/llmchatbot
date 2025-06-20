@@ -39,3 +39,5 @@ langchain_core
 langchain_community
 chromadb
 dotenv
+PyPDF2
+python-docx

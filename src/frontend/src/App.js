@@ -41,6 +41,8 @@ function App() {
   const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const [ragFile, setRagFile] = useState(null);
+  const [ragUrl, setRagUrl] = useState('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -129,59 +131,61 @@ function App() {
     }
   };
 
-  const handleFileChange = (event) => {
+  const handleRagFileChange = (event) => {
     const file = event.target.files[0];
-    if (file && file.type === 'text/csv') {
-      setCsvFile(file);
+    if (file && [
+      'text/csv',
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword'
+    ].includes(file.type)) {
+      setRagFile(file);
       setError(null);
     } else {
-      setError('Please select a valid CSV file');
-      setCsvFile(null);
+      setError('Please select a valid CSV, PDF, or DOC/DOCX file');
+      setRagFile(null);
     }
   };
 
-  const handleFileUpload = async () => {
-    if (!csvFile) {
-      setError('Please select a CSV file first');
+  const handleRagUpload = async () => {
+    if (!ragFile && !ragUrl) {
+      setError('Please select a file or enter a URL');
       return;
     }
 
     setUploading(true);
     setError(null);
-
-    const formData = new FormData();
-    formData.append('file', csvFile);
-
+    
     try {
-      const response = await api.post('/api/v1/rag', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      let response;
+      if (ragFile) {
+        const formData = new FormData();
+        formData.append('file', ragFile);
+        response = await api.post('/api/v1/rag', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      } else if (ragUrl) {
+        response = await api.post('/api/v1/rag', {
+          url: ragUrl,
+        });
+      }
 
       if (response.data.status === 'success') {
         setError(null);
         setMessages(prev => [...prev, {
-          text: `CSV file "${csvFile.name}" uploaded successfully. You can now ask questions about the data.`,
+          text: `RAG data uploaded successfully.`,
           sender: 'bot'
         }]);
-        setCsvFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
+        setRagFile(null);
+        setRagUrl('');
+        if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
-        throw new Error(response.data.message || 'Failed to upload file');
+        throw new Error(response.data.message || 'Failed to upload');
       }
     } catch (error) {
-      console.error('Upload Error:', error);
-      let errorMessage = 'Failed to upload file. Please try again.';
-      
-      if (error.response) {
-        errorMessage = error.response.data?.message || error.response.statusText;
-      } else if (error.request) {
-        errorMessage = 'No response from server. Please check your connection.';
-      }
-      
+      let errorMessage = 'Failed to upload. Please try again.';
+      if (error.response) errorMessage = error.response.data?.message || error.response.statusText;
+      else if (error.request) errorMessage = 'No response from server. Please check your connection.';
       setError(errorMessage);
     } finally {
       setUploading(false);
@@ -189,9 +193,9 @@ function App() {
   };
 
   return (
-    <Container maxWidth="md" sx={{ height: '100vh', py: 2 }}>
+    <Container maxWidth="md" sx={{ height: '100vh', py: 2, bgcolor: '#f5f5f5' }}>
       <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center',  bgcolor: '#f5f5f5'  }}>
           <Typography variant="h5">LLM Chatbot</Typography>
           {sessionId && (
             <IconButton onClick={handleClearContext} color="error" title="Clear Context">
@@ -214,29 +218,36 @@ function App() {
               startIcon={<UploadFileIcon />}
               disabled={uploading}
             >
-              Choose CSV File
+              Choose File
               <input
                 type="file"
                 hidden
-                accept=".csv"
-                onChange={handleFileChange}
+                accept=".csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+                onChange={handleRagFileChange}
                 ref={fileInputRef}
               />
             </Button>
-            {csvFile && (
-              <Typography variant="body2" sx={{ flex: 1 }}>
-                Selected: {csvFile.name}
-              </Typography>
-            )}
+            <TextField
+              label="or Enter URL"
+              value={ragUrl}
+              onChange={e => setRagUrl(e.target.value)}
+              disabled={uploading}
+              sx={{ minWidth: 200 }}
+            />
             <Button
               variant="contained"
-              onClick={handleFileUpload}
-              disabled={!csvFile || uploading}
+              onClick={handleRagUpload}
+              disabled={uploading || (!ragFile && !ragUrl)}
               startIcon={uploading ? <CircularProgress size={20} /> : <UploadFileIcon />}
             >
               {uploading ? 'Uploading...' : 'Upload'}
             </Button>
           </Stack>
+          {(ragFile && (
+            <Typography variant="body2" sx={{ flex: 1 }}>
+              Selected: {ragFile.name}
+            </Typography>
+          ))}
         </Box>
 
         <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
