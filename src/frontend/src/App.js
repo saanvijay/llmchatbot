@@ -24,7 +24,7 @@ const API_URL = process.env.NODE_ENV === 'production'
 // Create axios instance with default config
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 30000, // 30 seconds timeout
+  timeout: 60000, // 60 seconds timeout
   headers: {
     'Content-Type': 'application/json',
   }
@@ -61,8 +61,7 @@ function App() {
 
     try {
       const response = await api.post('/api/v1/chat', {
-        question: input,
-        contextt: context || '',// Only clear context if there's no existing context
+        question: input
       }, {
         headers: {
           ...(sessionId && { 'X-Session-ID': sessionId })
