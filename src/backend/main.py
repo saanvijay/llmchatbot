@@ -66,6 +66,9 @@ context_store = defaultdict(lambda: {
     'last_updated': datetime.now()
 })
 
+# In-memory storage for idempotency
+idempotency_cache = {}
+
 def validate_json(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -103,6 +106,33 @@ def is_context_expired(session_id):
     expiry_time = datetime.now() - last_updated
     return expiry_time.total_seconds() > app.config['CONTEXT_EXPIRY']
 
+def get_idempotency_key():
+    """Get idempotency key from request headers"""
+    return request.headers.get('X-Idempotency-Key')
+
+def is_idempotent_request(idempotency_key):
+    """Check if this is a duplicate request based on idempotency key"""
+    return idempotency_key in idempotency_cache
+
+def cache_response(idempotency_key, response_data, status_code):
+    """Cache the response for idempotency"""
+    idempotency_cache[idempotency_key] = {
+        'response': response_data,
+        'status_code': status_code,
+        'timestamp': datetime.now()
+    }
+
+def cleanup_old_cache():
+    """Clean up old cached responses (older than 24 hours)"""
+    current_time = datetime.now()
+    keys_to_remove = []
+    for key, value in idempotency_cache.items():
+        if (current_time - value['timestamp']).total_seconds() > 86400:  # 24 hours
+            keys_to_remove.append(key)
+    
+    for key in keys_to_remove:
+        del idempotency_cache[key]
+
 @app.route('/api/v1/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -117,6 +147,16 @@ def health_check():
 @log_request
 def chat():
     try:
+        # Check for idempotency
+        idempotency_key = get_idempotency_key()
+        if idempotency_key and is_idempotent_request(idempotency_key):
+            # Return cached response
+            cached_data = idempotency_cache[idempotency_key]
+            return jsonify(cached_data['response']), cached_data['status_code']
+        
+        # Clean up old cache entries
+        cleanup_old_cache()
+        
         data = request.get_json()
         session_id = get_session_id()
         question = data.get("question", "")
@@ -135,8 +175,8 @@ def chat():
                 embedding_function=embedding_fn
             )
             retriever = vector_store.as_retriever()
-            full_query = f"{context}\n\n{question}"
-            summary = retriever.invoke(full_query)
+            #full_query = f"{context}\n\n{question}"
+            summary = retriever.invoke(f"{question}")
         
         #logger.info(f"VIJAY:", {"summary": summary, "question": question, "context": context})
         if not summary and not context:
@@ -146,8 +186,24 @@ def chat():
             chain2 = model
             full_query = f"{context}\n\n{question}"
             result = chain2.invoke(full_query)
+        elif summary and not context:
+            chain1 = model
+            result = chain1.invoke(question)
         else:
-            result = chain.invoke({"summary": summary, "question": question, "context": context})
+            question1 = question
+            summary1 = summary
+            results = {}
+            for word in question1.split():
+                results[word] = any(word.lower() in str(w).lower() for w in summary1)
+            if any(results.values()):
+                result = chain.invoke({
+                    "summary": str(summary), 
+                    "question": question, 
+                    "context": context
+                })
+            else:
+                chain1 = model
+                result = chain1.invoke(question)
         
         if result :
             #logger.info("VIJAY : Result is", {result})
@@ -158,7 +214,8 @@ def chat():
                 'context': context,
                 'last_updated': datetime.now()
             }
-            return jsonify({
+            
+            response_data = {
                 'status': 'success',
                 'data': {
                     'question': question,
@@ -166,15 +223,27 @@ def chat():
                     'timestamp': datetime.now().isoformat(),
                     'session_id': session_id
                 }
-            }), HTTPStatus.OK
+            }
+            
+            # Cache response if idempotency key is provided
+            if idempotency_key:
+                cache_response(idempotency_key, response_data, HTTPStatus.OK)
+            
+            return jsonify(response_data), HTTPStatus.OK
 
     except Exception as e:
         logger.error(f"Error processing chat request: {str(e)}")
-        return jsonify({
+        error_response = {
             'status': 'error',
             'message': 'Internal server error',
             'error': str(e)
-        }), HTTPStatus.INTERNAL_SERVER_ERROR
+        }
+        
+        # Cache error response if idempotency key is provided
+        if idempotency_key:
+            cache_response(idempotency_key, error_response, HTTPStatus.INTERNAL_SERVER_ERROR)
+        
+        return jsonify(error_response), HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.route('/api/v1/context', methods=['DELETE'])
 def clear_context():
@@ -223,7 +292,14 @@ def rag():
             url = data.get('url')
             if not url:
                 return jsonify({'status': 'error', 'message': 'url is required for RAG processing.'}), HTTPStatus.BAD_REQUEST
-            response = requests.get(url, timeout=60)
+            response = requests.get(url, timeout=60, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            })
             if response.status_code != 200:
                 return jsonify({'status': 'error', 'message': f'Failed to fetch URL: {response.status_code}'}), HTTPStatus.BAD_REQUEST
             content = response.text
