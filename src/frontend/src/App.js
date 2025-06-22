@@ -61,12 +61,16 @@ function App() {
     setLoading(true);
     setError(null);
 
+    // Generate idempotency key based on question and session
+    const idempotencyKey = `${sessionId || 'anonymous'}-${Date.now()}-${input.trim().toLowerCase().replace(/\s+/g, '-')}`;
+
     try {
       const response = await api.post('/api/v1/chat', {
         question: input
       }, {
         headers: {
-          ...(sessionId && { 'X-Session-ID': sessionId })
+          ...(sessionId && { 'X-Session-ID': sessionId }),
+          'X-Idempotency-Key': idempotencyKey
         }
       });
 
