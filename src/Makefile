@@ -9,16 +9,19 @@ clean:
 	docker rmi -f llmchatbottemplate:latest ollama/ollama
 	docker network ls | grep llmnetwork && docker network rm llmnetwork
 
-.PHONY: run
-run: build
+.PHONY: containers
+containers: build
 	docker network inspect llmnetwork >/dev/null 2>&1 || docker network create llmnetwork && \
 	cd backend && \
-	docker-compose up -d && \
-	cd ../frontend && \
+	docker-compose up -d
+
+.PHONY: run
+run: build containers
+	cd frontend && \
 	npm install && \
 	npm start
 
-
-.PHONY: stop
-stop:
-	docker-compose down	
+.PHONY: down
+down:
+	cd backend && \
+	docker-compose down -v 
