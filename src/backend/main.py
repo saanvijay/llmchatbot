@@ -47,6 +47,7 @@ app.config['CONTEXT_EXPIRY'] = int(os.getenv('CONTEXT_EXPIRY'))
 app.config['BACKEND_SERVER_PORT'] = int (os.getenv('BACKEND_SERVER_PORT'))
 app.config['CHROMA_DB_PATH'] = os.getenv('CHROMA_DB_PATH')
 app.config['CHROMA_COLLECTION'] = os.getenv('CHROMA_COLLECTION')
+app.config['CHROMA_TELEMETRY_ANONYMIZED'] = os.getenv('CHROMA_TELEMETRY_ANONYMIZED')
 
 # Initialize Ollama
 template = """
@@ -292,14 +293,10 @@ def rag():
             url = data.get('url')
             if not url:
                 return jsonify({'status': 'error', 'message': 'url is required for RAG processing.'}), HTTPStatus.BAD_REQUEST
-            response = requests.get(url, timeout=60, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            })
+            headers = {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15"
+            }
+            response = requests.get(url, headers=headers)
             if response.status_code != 200:
                 return jsonify({'status': 'error', 'message': f'Failed to fetch URL: {response.status_code}'}), HTTPStatus.BAD_REQUEST
             content = response.text
@@ -308,7 +305,7 @@ def rag():
             return jsonify({'status': 'error', 'message': 'No content extracted from input.'}), HTTPStatus.BAD_REQUEST
 
         # Create document and store in Chroma
-        doc = Document(page_content=content, metadata={'source': collection_name}, id='0')
+        doc = Document(page_content=content, metadata={'source': collection_name})
         embeddings = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
         client = chromadb.PersistentClient(path=app.config['CHROMA_DB_PATH'])
         vectorstore = Chroma(
