@@ -1,4 +1,4 @@
-# llmchatbot
+# llmchatbot ( WIP )
 Simple LLM chatbot using ollama
 
 # Prerequisites
@@ -8,12 +8,13 @@ Simple LLM chatbot using ollama
 4. ReactJS
 ![Pre-requisites](./src/images/pre-req.png)
 # Bring-up backend 
-``` 
+```
+make build
 make containers
 ```
 ![Containers](./src/images/docker-containers.png)
 
-# Make sure ollama model pulled successfully 100%
+# Make sure ollama model and text embed model pulled successfully 100%
 ![Ollama-pull-success](./src/images/ollama-pull.png)
 
 # Bring up frontend

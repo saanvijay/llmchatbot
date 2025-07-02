@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from http import HTTPStatus
 from functools import wraps
@@ -18,6 +18,12 @@ from werkzeug.utils import secure_filename
 import tempfile
 import PyPDF2
 import docx
+import speech_recognition as sr
+import pyttsx3
+import io
+import base64
+from pydub import AudioSegment
+from gtts import gTTS
 
 import os
 import io
@@ -318,6 +324,101 @@ def rag():
     except Exception as e:
         logger.error(f"Error processing RAG request: {str(e)}")
         return jsonify({'status': 'error', 'message': 'Error processing input for RAG', 'error': str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+@app.route('/api/v1/voice/speech-to-text', methods=['POST'])
+def speech_to_text():
+    """Convert speech audio to text"""
+    try:
+        if 'audio' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No audio file provided'}), HTTPStatus.BAD_REQUEST
+        
+        audio_file = request.files['audio']
+        if audio_file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No audio file selected'}), HTTPStatus.BAD_REQUEST
+        
+        # Save audio file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.audio') as tmp:
+            audio_file.save(tmp.name)
+            audio_path = tmp.name
+        
+        # Convert audio to WAV using pydub
+        try:
+            # Try to detect the format from the file
+            audio = AudioSegment.from_file(audio_path)
+            wav_path = audio_path.replace('.audio', '.wav')
+            audio.export(wav_path, format="wav", parameters=["-ar", "16000", "-ac", "1"])
+        except Exception as e:
+            logger.error(f"Error converting audio format: {str(e)}")
+            # Fallback: try to use the original file if conversion fails
+            wav_path = audio_path
+            logger.info("Using original audio file as fallback")
+        
+        # Initialize recognizer
+        recognizer = sr.Recognizer()
+        
+        # Load audio file
+        with sr.AudioFile(wav_path) as source:
+            # Adjust for ambient noise
+            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            audio_data = recognizer.record(source)
+        
+        # Convert speech to text
+        text = recognizer.recognize_google(audio_data)
+        
+        # Clean up temporary files
+        os.unlink(audio_path)
+        if wav_path != audio_path:  # Only delete wav file if it's different from original
+            os.unlink(wav_path)
+        
+        return jsonify({
+            'status': 'success',
+            'text': text
+        }), HTTPStatus.OK
+        
+    except sr.UnknownValueError:
+        return jsonify({'status': 'error', 'message': 'Could not understand audio. Please speak clearly and try again.'}), HTTPStatus.BAD_REQUEST
+    except sr.RequestError as e:
+        return jsonify({'status': 'error', 'message': f'Speech recognition service error: {str(e)}'}), HTTPStatus.INTERNAL_SERVER_ERROR
+    except Exception as e:
+        logger.error(f"Error in speech-to-text: {str(e)}")
+        return jsonify({'status': 'error', 'message': 'Error processing audio. Please try again.'}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+@app.route('/api/v1/voice/text-to-speech', methods=['POST'])
+@validate_json
+def text_to_speech():
+    """Convert text to speech audio using gTTS (Google Text-to-Speech) and return MP3 audio."""
+    try:
+        data = request.get_json()
+        text = data.get('text', '')
+        
+        if not text:
+            return jsonify({'status': 'error', 'message': 'No text provided'}), HTTPStatus.BAD_REQUEST
+        
+        # Generate speech using gTTS
+        tts = gTTS(text=text, lang='en', slow=False)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+            audio_path = tmp.name
+            tts.save(audio_path)
+        
+        # Read the generated audio file
+        with open(audio_path, 'rb') as audio_file:
+            audio_data = audio_file.read()
+        
+        # Clean up temporary file
+        os.unlink(audio_path)
+        
+        # Convert to base64 for sending
+        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        
+        return jsonify({
+            'status': 'success',
+            'audio': audio_base64,
+            'format': 'mp3'
+        }), HTTPStatus.OK
+        
+    except Exception as e:
+        logger.error(f"Error in text-to-speech: {str(e)}")
+        return jsonify({'status': 'error', 'message': 'Error generating speech'}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.errorhandler(404)
 def not_found(error):

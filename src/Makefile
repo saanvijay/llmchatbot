@@ -1,7 +1,7 @@
 # clean up
 .PHONY: all build
 build:
-	docker build -t llmchatbottemplate:latest backend/
+	docker build --no-cache -t llmchatbottemplate:latest backend/
 
 .PHONY: clean
 clean:
@@ -10,13 +10,13 @@ clean:
 	docker network ls | grep llmnetwork && docker network rm llmnetwork
 
 .PHONY: containers
-containers: build
+containers: 
 	docker network inspect llmnetwork >/dev/null 2>&1 || docker network create llmnetwork && \
 	cd backend && \
 	docker-compose up -d
 
 .PHONY: run
-run: build containers
+run: 
 	cd frontend && \
 	npm install && \
 	npm start
