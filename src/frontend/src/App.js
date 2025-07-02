@@ -14,6 +14,9 @@ import {
 import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import MicIcon from '@mui/icons-material/Mic';
+import MicOffIcon from '@mui/icons-material/MicOff';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import axios from 'axios';
 
 // Use relative URL in development (will be proxied) or full URL in production
@@ -24,7 +27,7 @@ const API_URL = process.env.NODE_ENV === 'production'
 // Create axios instance with default config
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 60000, // 60 seconds timeout
+  timeout: 120000, // 120 seconds timeout
   headers: {
     'Content-Type': 'application/json',
   }
@@ -39,10 +42,14 @@ function App() {
   const [error, setError] = useState(null);
   const [csvFile, setCsvFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [audioChunks, setAudioChunks] = useState([]);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const [ragFile, setRagFile] = useState(null);
   const [ragUrl, setRagUrl] = useState('');
+  const audioRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -80,6 +87,9 @@ function App() {
           text: botResponse,
           sender: 'bot'
         }]);
+        
+        // Play audio for bot response
+        await playAudio(botResponse);
         
         // Append new Q&A pair to existing context
         const newQAPair = `User: ${input}\nAI: ${botResponse}\n`;
@@ -196,6 +206,151 @@ function App() {
     }
   };
 
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        } 
+      });
+      
+      // Try different MIME types in order of preference
+      const mimeTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/wav'
+      ];
+      
+      let selectedMimeType = null;
+      for (const mimeType of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(mimeType)) {
+          selectedMimeType = mimeType;
+          break;
+        }
+      }
+      
+      if (!selectedMimeType) {
+        throw new Error('No supported audio format found');
+      }
+      
+      const recorder = new MediaRecorder(stream, { mimeType: selectedMimeType });
+      const chunks = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        try {
+          const audioBlob = new Blob(chunks, { type: selectedMimeType });
+          await handleVoiceInput(audioBlob);
+        } catch (error) {
+          console.error('Error processing recorded audio:', error);
+          setError('Error processing voice input. Please try again.');
+        } finally {
+          stream.getTracks().forEach(track => track.stop());
+        }
+      };
+
+      recorder.onerror = (event) => {
+        console.error('Recording error:', event.error);
+        setError('Recording error. Please try again.');
+        setIsRecording(false);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      recorder.start();
+      setMediaRecorder(recorder);
+      setAudioChunks(chunks);
+      setIsRecording(true);
+      setError(null);
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      setError('Could not access microphone. Please check permissions.');
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && isRecording) {
+      try {
+        mediaRecorder.stop();
+        setIsRecording(false);
+      } catch (error) {
+        console.error('Error stopping recording:', error);
+        setIsRecording(false);
+      }
+    }
+  };
+
+  const handleVoiceInput = async (audioBlob) => {
+    try {
+      setLoading(true);
+      const formData = new FormData();
+      
+      // Determine file extension based on MIME type
+      let fileExtension = 'audio';
+      if (audioBlob.type.includes('webm')) {
+        fileExtension = 'webm';
+      } else if (audioBlob.type.includes('mp4')) {
+        fileExtension = 'mp4';
+      } else if (audioBlob.type.includes('wav')) {
+        fileExtension = 'wav';
+      }
+      
+      formData.append('audio', audioBlob, `recording.${fileExtension}`);
+
+      const response = await api.post('/api/v1/voice/speech-to-text', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (response.data.status === 'success') {
+        setInput(response.data.text);
+        setError(null);
+      } else {
+        setError('Could not understand audio. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error processing voice input:', error);
+      setError('Error processing voice input. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const playAudio = async (text) => {
+    try {
+      const response = await api.post('/api/v1/voice/text-to-speech', {
+        text: text
+      });
+
+      if (response.data.status === 'success') {
+        const audioData = atob(response.data.audio);
+        const audioArray = new Uint8Array(audioData.length);
+        for (let i = 0; i < audioData.length; i++) {
+          audioArray[i] = audioData.charCodeAt(i);
+        }
+        
+        const audioBlob = new Blob([audioArray], { type: 'audio/wav' });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        
+        if (audioRef.current) {
+          audioRef.current.src = audioUrl;
+          audioRef.current.play();
+        }
+      }
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      setError('Error playing audio response.');
+    }
+  };
+
   return (
     <Container maxWidth="md" sx={{ height: '100vh', py: 2, bgcolor: '#f5f5f5' }}>
       <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -277,7 +432,18 @@ function App() {
                   color: message.sender === 'user' ? 'white' : 'text.primary'
                 }}
               >
-                <Typography>{message.text}</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography sx={{ flex: 1 }}>{message.text}</Typography>
+                  {message.sender === 'bot' && (
+                    <IconButton
+                      size="small"
+                      onClick={() => playAudio(message.text)}
+                      color="primary"
+                    >
+                      <VolumeUpIcon />
+                    </IconButton>
+                  )}
+                </Box>
               </Paper>
             </Box>
           ))}
@@ -291,6 +457,21 @@ function App() {
 
         <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', gap: 1 }}>
+            <IconButton
+              onClick={isRecording ? stopRecording : startRecording}
+              color={isRecording ? "error" : "primary"}
+              disabled={loading}
+              sx={{
+                backgroundColor: isRecording ? 'error.main' : 'transparent',
+                color: isRecording ? 'white' : 'primary.main',
+                '&:hover': {
+                  backgroundColor: isRecording ? 'error.dark' : 'primary.light',
+                  color: isRecording ? 'white' : 'primary.dark',
+                }
+              }}
+            >
+              {isRecording ? <MicOffIcon /> : <MicIcon />}
+            </IconButton>
             <TextField
               fullWidth
               multiline
@@ -298,22 +479,35 @@ function App() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
+              placeholder={isRecording ? "Recording... Click microphone to stop" : "Type your message or use voice input..."}
               variant="outlined"
               size="small"
-              disabled={loading}
+              disabled={loading || isRecording}
             />
             <Button
               variant="contained"
               color="primary"
               onClick={handleSend}
-              disabled={loading || !input.trim()}
+              disabled={loading || !input.trim() || isRecording}
               endIcon={<SendIcon />}
             >
               Send
             </Button>
           </Box>
+          {isRecording && (
+            <Typography 
+              variant="caption" 
+              color="error" 
+              sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}
+            >
+              <MicIcon fontSize="small" />
+              Recording... Click the microphone button to stop
+            </Typography>
+          )}
         </Box>
+        
+        {/* Hidden audio element for playback */}
+        <audio ref={audioRef} style={{ display: 'none' }} />
       </Paper>
     </Container>
   );
