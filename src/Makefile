@@ -9,11 +9,17 @@ clean:
 	docker rmi -f llmchatbottemplate:latest ollama/ollama
 	docker network ls | grep llmnetwork && docker network rm llmnetwork
 
-.PHONY: containers
-containers: 
+.PHONY: containers-with-cpu
+containers-with-cpu: 
 	docker network inspect llmnetwork >/dev/null 2>&1 || docker network create llmnetwork && \
 	cd backend && \
-	docker-compose up -d
+	docker-compose --profile cpu up -d
+
+.PHONY: containers-with-gpu
+containers-with-gpu: 
+	docker network inspect llmnetwork >/dev/null 2>&1 || docker network create llmnetwork && \
+	cd backend && \
+	docker-compose --profile gpu up -d
 
 .PHONY: run
 run: 
