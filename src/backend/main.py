@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
 from http import HTTPStatus
 from functools import wraps
@@ -419,6 +419,33 @@ def text_to_speech():
     except Exception as e:
         logger.error(f"Error in text-to-speech: {str(e)}")
         return jsonify({'status': 'error', 'message': 'Error generating speech'}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+@app.route('/api/v1/chat/stream', methods=['POST'])
+@validate_json
+@log_request
+def chat_stream():
+    """Stream LLM response from Ollama to the client."""
+    try:
+        data = request.get_json()
+        question = data.get("question", "")
+        ollama_url = app.config['OLLAMA_BASE_URL']
+        model = app.config['OLLAMA_MODEL']
+        stream_url = f"{ollama_url}/api/chat"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": question}],
+            "stream": True
+        }
+        def generate():
+            with requests.post(stream_url, json=payload, headers=headers, stream=True) as r:
+                for line in r.iter_lines():
+                    if line:
+                        yield line + b"\n"
+        return Response(generate(), mimetype='text/event-stream')
+    except Exception as e:
+        logger.error(f"Error in streaming chat: {str(e)}")
+        return jsonify({'status': 'error', 'message': 'Internal server error', 'error': str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.errorhandler(404)
 def not_found(error):

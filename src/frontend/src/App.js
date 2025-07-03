@@ -10,6 +10,8 @@ import {
   IconButton,
   Alert,
   Stack,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -50,6 +52,8 @@ function App() {
   const [ragFile, setRagFile] = useState(null);
   const [ragUrl, setRagUrl] = useState('');
   const audioRef = useRef(null);
+  const [playingIndex, setPlayingIndex] = useState(null);
+  const [audioLoadingIndex, setAudioLoadingIndex] = useState(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -87,9 +91,6 @@ function App() {
           text: botResponse,
           sender: 'bot'
         }]);
-        
-        // Play audio for bot response
-        await playAudio(botResponse);
         
         // Append new Q&A pair to existing context
         const newQAPair = `User: ${input}\nAI: ${botResponse}\n`;
@@ -324,38 +325,49 @@ function App() {
     }
   };
 
-  const playAudio = async (text) => {
+  const playAudio = async (text, index) => {
+    if (audioRef.current && playingIndex === index && !audioRef.current.paused) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setPlayingIndex(null);
+      return;
+    }
+    setAudioLoadingIndex(index);
+    setPlayingIndex(null);
     try {
-      const response = await api.post('/api/v1/voice/text-to-speech', {
-        text: text
-      });
-
+      const response = await api.post('/api/v1/voice/text-to-speech', { text });
       if (response.data.status === 'success') {
         const audioData = atob(response.data.audio);
         const audioArray = new Uint8Array(audioData.length);
         for (let i = 0; i < audioData.length; i++) {
           audioArray[i] = audioData.charCodeAt(i);
         }
-        
-        const audioBlob = new Blob([audioArray], { type: 'audio/wav' });
+        const audioBlob = new Blob([audioArray], { type: 'audio/mp3' });
         const audioUrl = URL.createObjectURL(audioBlob);
-        
         if (audioRef.current) {
           audioRef.current.src = audioUrl;
+          audioRef.current.onended = () => setPlayingIndex(null);
+          audioRef.current.onplay = () => {
+            setPlayingIndex(index);
+            setAudioLoadingIndex(null);
+          };
           audioRef.current.play();
         }
+      } else {
+        setAudioLoadingIndex(null);
       }
     } catch (error) {
-      console.error('Error playing audio:', error);
       setError('Error playing audio response.');
+      setPlayingIndex(null);
+      setAudioLoadingIndex(null);
     }
   };
 
   return (
     <Container maxWidth="md" sx={{ height: '100vh', py: 2, bgcolor: '#f5f5f5' }}>
       <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center',  bgcolor: '#f5f5f5'  }}>
-          <Typography variant="h5">LLM Chatbot</Typography>
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center',  bgcolor: '#424242'  }}>
+          <Typography variant="h5" sx={{ color: 'white' }}>LLM Chatbot</Typography>
           {sessionId && (
             <IconButton onClick={handleClearContext} color="error" title="Clear Context">
               <DeleteIcon />
@@ -437,10 +449,11 @@ function App() {
                   {message.sender === 'bot' && (
                     <IconButton
                       size="small"
-                      onClick={() => playAudio(message.text)}
-                      color="primary"
+                      onClick={() => playAudio(message.text, index)}
+                      color={playingIndex === index ? "secondary" : "primary"}
+                      disabled={audioLoadingIndex !== null && audioLoadingIndex !== index}
                     >
-                      <VolumeUpIcon />
+                      {audioLoadingIndex === index ? <CircularProgress size={20} /> : <VolumeUpIcon />}
                     </IconButton>
                   )}
                 </Box>
