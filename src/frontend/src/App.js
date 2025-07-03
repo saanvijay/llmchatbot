@@ -163,8 +163,8 @@ function App() {
   };
 
   const handleRagUpload = async () => {
-    if (!ragFile && !ragUrl) {
-      setError('Please select a file or enter a URL');
+    if (!ragFile) {
+      setError('Please select a file');
       return;
     }
 
@@ -172,18 +172,11 @@ function App() {
     setError(null);
     
     try {
-      let response;
-      if (ragFile) {
-        const formData = new FormData();
-        formData.append('file', ragFile);
-        response = await api.post('/api/v1/rag', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
-      } else if (ragUrl) {
-        response = await api.post('/api/v1/rag', {
-          url: ragUrl,
-        });
-      }
+      const formData = new FormData();
+      formData.append('file', ragFile);
+      const response = await api.post('/api/v1/rag', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
 
       if (response.data.status === 'success') {
         setError(null);
@@ -192,7 +185,6 @@ function App() {
           sender: 'bot'
         }]);
         setRagFile(null);
-        setRagUrl('');
         if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
         throw new Error(response.data.message || 'Failed to upload');
@@ -398,17 +390,10 @@ function App() {
                 ref={fileInputRef}
               />
             </Button>
-            <TextField
-              label="or Enter URL"
-              value={ragUrl}
-              onChange={e => setRagUrl(e.target.value)}
-              disabled={uploading}
-              sx={{ minWidth: 200 }}
-            />
             <Button
               variant="contained"
               onClick={handleRagUpload}
-              disabled={uploading || (!ragFile && !ragUrl)}
+              disabled={uploading || !ragFile}
               startIcon={uploading ? <CircularProgress size={20} /> : <UploadFileIcon />}
             >
               {uploading ? 'Uploading...' : 'Upload'}

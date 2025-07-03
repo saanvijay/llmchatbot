@@ -1,4 +1,4 @@
-# llmchatbot ( WIP )
+# llmchatbot 
 Simple LLM chatbot using ollama
 
 # Prerequisites
@@ -32,6 +32,9 @@ make run
 * Select data/test.csv (sample file) ( if you have your own csv/docx file you can upload it)
 * Click on 'UPLOAD'
 ![RAG-test](./src/images/RAG-test.png)
+
+# Voice support
+Click on 'mike' icon and talk, your voice will be converted into words and Click on Send. Once the LLM responds, you can click on 'Speaker' icon to listen
 
 # Clear context
   Click on delete icon
