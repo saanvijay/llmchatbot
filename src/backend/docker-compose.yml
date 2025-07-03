@@ -1,8 +1,9 @@
-version: '3.8'
+version: '3.9'
 
 services:
-  ollama:
+  ollama-cpu:
     image: ollama/ollama
+    profiles: ["cpu"]
     container_name: ollama
     volumes:
       - /tmp/ollamamodels:/root/.ollama
@@ -13,6 +14,27 @@ services:
     networks:
       - llmnetwork
     restart: unless-stopped
+   
+  ollama-gpu:
+    image: ollama/ollama
+    profiles: ["gpu"]
+    container_name: ollama
+    volumes:
+      - /tmp/ollamamodels:/root/.ollama
+      - ./entrypoint.sh:/entrypoint.sh
+    entrypoint: ["/entrypoint.sh"]
+    ports:
+      - "11434:11434"
+    networks:
+      - llmnetwork
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   llmapp:
     image: llmchatbottemplate:latest
@@ -25,8 +47,6 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
       - PORT=8000
-    depends_on:
-      - ollama
     restart: unless-stopped
 
 networks:
