@@ -10,7 +10,9 @@ Simple LLM chatbot using ollama
 # Bring-up backend 
 ```
 make build
-make containers
+make containers-with-cpu ( slow response with cpu )
+or
+make containers-with-gpu ( fast LLM response, but make sure you have nvidia driver installed and 'nvidia-smi' command works in CLI)
 ```
 ![Containers](./src/images/docker-containers.png)
 
