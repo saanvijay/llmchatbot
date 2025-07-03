@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
 from http import HTTPStatus
 from functools import wraps
@@ -140,6 +140,24 @@ def cleanup_old_cache():
     for key in keys_to_remove:
         del idempotency_cache[key]
 
+def is_rag_relevant(question, summary):
+    """Check if RAG data is relevant to the question"""
+    if not summary:
+        return False
+    
+    # Convert question and summary to lowercase for comparison
+    question_lower = question.lower()
+    summary_text = str(summary).lower()
+    
+    # Extract key words from question (simple approach)
+    question_words = set(word for word in question_lower.split() if len(word) > 3)
+    
+    # Check if any key words from question appear in summary
+    relevant_words = [word for word in question_words if word in summary_text]
+    
+    # Consider relevant if at least 1 key word matches
+    return len(relevant_words) > 0
+
 @app.route('/api/v1/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -171,8 +189,25 @@ def chat():
 
         # Retrieve previous context or start fresh
         context = context_store[session_id]['context'] if session_id in context_store else ""
-        summary = []
-        if os.path.exists(app.config['CHROMA_DB_PATH']):
+        
+        # Check if RAG/Chroma DB exists
+        rag_data_available = os.path.exists(app.config['CHROMA_DB_PATH'])
+        
+        # Determine which approach to use based on available data
+        if not context and not rag_data_available:
+            # Scenario 1: No context and no RAG data - use basic chain
+            logger.info("Using basic chain - no context, no RAG data")
+            result = model.invoke(question)
+            
+        elif context and not rag_data_available:
+            # Scenario 2: Has context but no RAG data - use context with chain
+            logger.info("Using context with chain - no RAG data")
+            full_query = f"{context}\n\n{question}"
+            result = model.invoke(full_query)
+            
+        elif not context and rag_data_available:
+            # Scenario 3: No context but has RAG data - use RAG search
+            logger.info("Using RAG search - no context")
             client = chromadb.PersistentClient(path=app.config['CHROMA_DB_PATH'])
             embedding_fn = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
             chroma_collection = collection_name if collection_name else app.config['CHROMA_COLLECTION']
@@ -182,38 +217,47 @@ def chat():
                 embedding_function=embedding_fn
             )
             retriever = vector_store.as_retriever()
-            #full_query = f"{context}\n\n{question}"
-            summary = retriever.invoke(f"{question}")
-        
-        #logger.info(f"VIJAY:", {"summary": summary, "question": question, "context": context})
-        if not summary and not context:
-            chain1 = model
-            result = chain1.invoke(question)
-        elif not summary and context:
-            chain2 = model
-            full_query = f"{context}\n\n{question}"
-            result = chain2.invoke(full_query)
-        elif summary and not context:
-            chain1 = model
-            result = chain1.invoke(question)
+            summary = retriever.invoke(question)
+            
+            if summary and is_rag_relevant(question, summary):
+                logger.info("RAG data is relevant - using RAG search")
+                result = chain.invoke({
+                    "summary": str(summary), 
+                    "question": question, 
+                    "context": ""
+                })
+            else:
+                logger.info("RAG data not relevant or empty - using basic model")
+                result = model.invoke(question)
+                
         else:
-            question1 = question
-            summary1 = summary
-            results = {}
-            for word in question1.split():
-                results[word] = any(word.lower() in str(w).lower() for w in summary1)
-            if any(results.values()):
+            # Scenario 4: Has both context and RAG data - use RAG as additional search data
+            logger.info("Using RAG search with context")
+            client = chromadb.PersistentClient(path=app.config['CHROMA_DB_PATH'])
+            embedding_fn = OllamaEmbeddings(base_url=app.config['OLLAMA_BASE_URL'], model=app.config['OLLAMA_EMBEDDING_MODEL'])
+            chroma_collection = collection_name if collection_name else app.config['CHROMA_COLLECTION']
+            vector_store = Chroma(
+                client=client,
+                collection_name=chroma_collection,
+                embedding_function=embedding_fn
+            )
+            retriever = vector_store.as_retriever()
+            summary = retriever.invoke(question)
+            
+            if summary and is_rag_relevant(question, summary):
+                logger.info("RAG data is relevant - using RAG search with context")
                 result = chain.invoke({
                     "summary": str(summary), 
                     "question": question, 
                     "context": context
                 })
             else:
-                chain1 = model
-                result = chain1.invoke(question)
+                # No relevant RAG data found, use context only
+                logger.info("RAG data not relevant or empty - using context only")
+                full_query = f"{context}\n\n{question}"
+                result = model.invoke(full_query)
         
-        if result :
-            #logger.info("VIJAY : Result is", {result})
+        if result:
             # Append new Q&A to context and store it
             context += f"Question: {question} Answer: {result}\n"
 
@@ -419,6 +463,33 @@ def text_to_speech():
     except Exception as e:
         logger.error(f"Error in text-to-speech: {str(e)}")
         return jsonify({'status': 'error', 'message': 'Error generating speech'}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+@app.route('/api/v1/chat/stream', methods=['POST'])
+@validate_json
+@log_request
+def chat_stream():
+    """Stream LLM response from Ollama to the client."""
+    try:
+        data = request.get_json()
+        question = data.get("question", "")
+        ollama_url = app.config['OLLAMA_BASE_URL']
+        model = app.config['OLLAMA_MODEL']
+        stream_url = f"{ollama_url}/api/chat"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": question}],
+            "stream": True
+        }
+        def generate():
+            with requests.post(stream_url, json=payload, headers=headers, stream=True) as r:
+                for line in r.iter_lines():
+                    if line:
+                        yield line + b"\n"
+        return Response(generate(), mimetype='text/event-stream')
+    except Exception as e:
+        logger.error(f"Error in streaming chat: {str(e)}")
+        return jsonify({'status': 'error', 'message': 'Internal server error', 'error': str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.errorhandler(404)
 def not_found(error):
