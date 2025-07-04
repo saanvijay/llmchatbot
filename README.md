@@ -34,7 +34,7 @@ make run
 ![RAG-test](./src/images/RAG-test.png)
 
 # Voice support
-Click on 'mike' icon and talk, your voice will be converted into words and Click on Send. Once the LLM responds, you can click on 'Speaker' icon to listen
+Click on 'mic' icon and talk, your voice will be converted into words and Click on Send. Once the LLM responds, you can click on 'Speaker' icon to listen
 
 # Clear context
   Click on delete icon
