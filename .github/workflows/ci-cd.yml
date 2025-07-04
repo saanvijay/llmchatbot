@@ -68,7 +68,6 @@ jobs:
           docker build -t ${{ env.IMAGE_NAME }}-backend:latest .
 
 
-
   # Frontend testing and building
   frontend:
     runs-on: ubuntu-latest
