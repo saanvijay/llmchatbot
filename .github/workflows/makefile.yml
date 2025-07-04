@@ -29,8 +29,16 @@ jobs:
       run: cd src; make build
 
     - name: containers
-      run: cd src; make containers-with-cpu
+      run: cd src; make containers-with-cpu; sleep 120
 
-    - name: Run check
-      run: cd src; make run
+    - name: Run chat API test
+      run: |
+        curl --request POST \
+          --url http://localhost:8000/api/v1/chat \
+          --header 'Content-Type: application/json' \
+          --header 'User-Agent: insomnia/11.2.0' \
+          --data '{
+          "context": "climate",
+          "question": "weather in usa texas?"
+        }'
 
