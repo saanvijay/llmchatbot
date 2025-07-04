@@ -14,12 +14,31 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install docker-compose
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y docker-compose
+
+    - name: Install Docker Compose plugin
+      run: |
+        mkdir -p ~/.docker/cli-plugins/
+        curl -SL https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
+        chmod +x ~/.docker/cli-plugins/docker-compose
+
     - name: build
-      run: make build
+      run: cd src; make build
 
     - name: containers
-      run: make containers-with-cpu
+      run: cd src; make containers-with-cpu; sleep 120
 
-    - name: Run check
-      run: make run
+    - name: Run chat API test
+      run: |
+        curl --request POST \
+          --url http://localhost:8000/api/v1/chat \
+          --header 'Content-Type: application/json' \
+          --header 'User-Agent: insomnia/11.2.0' \
+          --data '{
+          "context": "climate",
+          "question": "weather in usa texas?"
+        }'
 
