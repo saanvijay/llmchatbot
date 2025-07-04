@@ -9,6 +9,7 @@ Simple LLM chatbot using ollama
 ![Pre-requisites](./src/images/pre-req.png)
 # Bring-up backend 
 ```
+cd src
 make build
 make containers-with-cpu ( slow response with cpu )
 or
@@ -19,7 +20,7 @@ make containers-with-gpu ( fast LLM response, but make sure you have nvidia driv
 # Make sure ollama model and text embed model pulled successfully 100%
 ![Ollama-pull-success](./src/images/ollama-pull.png)
 
-# Bring up frontend
+# Bring up frontend (make sure you are in src dir)
 ```
 make run
 ```
