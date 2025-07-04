@@ -25,6 +25,23 @@ jobs:
         curl -SL https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
         chmod +x ~/.docker/cli-plugins/docker-compose
 
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@v0.16.2
+      with:
+        scan-type: 'fs'
+        scan-ref: './src'
+
+    - name: Run Bandit (Python security linter)
+      run: |
+        pip install bandit
+        bandit -r src/backend/
+
+    - name: Run npm audit (Node.js security check)
+      run: |
+        cd src/frontend
+        npm install
+        npm audit --audit-level=high
+
     - name: build
       run: cd src; make build
 

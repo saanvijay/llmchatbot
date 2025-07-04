@@ -13,7 +13,7 @@ cd src
 make build
 make containers-with-cpu ( slow response with cpu )
 or
-make containers-with-gpu ( fast LLM response, but make sure you have nvidia driver installed and 'nvidia-smi' command works in CLI)
+make containers-with-gpu ( fast LLM response, but make sure you have nvidia driver installed )
 ```
 ![Containers](./src/images/docker-containers.png)
 
