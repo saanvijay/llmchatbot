@@ -2,8 +2,8 @@
 Simple LLM chatbot using ollama
 
 # Prerequisites
-1. Docker
-2. Ollama3
+1. Docker (https://docs.docker.com/desktop/setup/install/mac-install/)
+2. Ollama3 (https://ollama.com/library/llama3)
 3. Python3
 4. ReactJS
 ![Pre-requisites](./src/images/pre-req.png)
